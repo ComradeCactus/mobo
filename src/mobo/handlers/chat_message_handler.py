@@ -39,12 +39,12 @@ class ChannelHistoryManager:
 
     def prune_messages(self, channel_id, number_of_messages, maxtokens, ptokens, model, is_llama):
         available_context = maxtokens - ptokens
-        print(f"Available Context: {available_context}")
+        #print(f"Available Context: {available_context}")
         keep_messages,total_tokens = self.max_tokenized_messages(channel_id, model, available_context, is_llama)
         if channel_id in self.history:
             self.history[channel_id] = self.history[channel_id][-keep_messages:]
-            print(keep_messages)
-            print(total_tokens)
+            #print(keep_messages)
+            #print(total_tokens)
 
     def message_count(self, channel_id):
         response_count = 0
@@ -69,7 +69,7 @@ class ChannelHistoryManager:
         keep_messages = 0
         if channel_id in self.history:
             for message in reversed(self.history[channel_id]):
-                print(message.to_dict())
+                #print(message.to_dict())
                 tokens = tokenizer.encode(str(message.to_dict()))
                 if is_llama:
                     total_tokens += int(len(tokens)*1.2) #increase it by a flat % for llama models. I'm lazy and would rather count high than go over and the model breaks.
