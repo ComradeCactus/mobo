@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 from openai import OpenAI
 from .base_handler import BaseHandler
+import tiktoken
 
 _log = logging.getLogger()
 _log.setLevel(logging.INFO)
@@ -36,9 +37,14 @@ class ChannelHistoryManager:
     def get_messages_dict(self, channel_id):
         return [message.to_dict() for message in self.get_messages(channel_id)]
 
-    def prune_messages(self, channel_id, number_of_messages):
+    def prune_messages(self, channel_id, number_of_messages, maxtokens, ptokens, model, is_llama):
+        available_context = maxtokens - ptokens
+        print(f"Available Context: {available_context}")
+        keep_messages,total_tokens = self.max_tokenized_messages(channel_id, model, available_context, is_llama)
         if channel_id in self.history:
-            self.history[channel_id] = self.history[channel_id][-number_of_messages:]
+            self.history[channel_id] = self.history[channel_id][-keep_messages:]
+            print(keep_messages)
+            print(total_tokens)
 
     def message_count(self, channel_id):
         response_count = 0
@@ -57,6 +63,25 @@ class ChannelHistoryManager:
             )
         return response_count
 
+    def max_tokenized_messages(self, channel_id, model, available_context, is_llama):
+        tokenizer = tiktoken.encoding_for_model(model) #link this to the bot config somehow later
+        total_tokens = 0
+        keep_messages = 0
+        if channel_id in self.history:
+            for message in reversed(self.history[channel_id]):
+                print(message.to_dict())
+                tokens = tokenizer.encode(str(message.to_dict()))
+                if is_llama:
+                    total_tokens += int(len(tokens)*1.2) #increase it by a flat % for llama models. I'm lazy and would rather count high than go over and the model breaks.
+                else:
+                    total_tokens += len(tokens)
+                
+                if total_tokens > available_context:
+                    total_tokens -= len(tokens)
+                    break
+                keep_messages += 1
+        return keep_messages, total_tokens
+
 
 class ChatMessageHandler(BaseHandler):
     def __init__(self) -> None:
@@ -66,6 +91,7 @@ class ChatMessageHandler(BaseHandler):
 
     async def handle(self, message, bot):
         channel_id = str(message.channel.id)
+        prompt_tokens = 0
 
         if not message.author.bot or (
             message.author.bot
@@ -82,14 +108,22 @@ class ChatMessageHandler(BaseHandler):
                 model=bot.config.model,
                 messages=[{"role": "system", "content": bot.config.personality}]
                 + self.history.get_messages_dict(channel_id),
+                max_tokens=490,
             )
 
             bot_response = completion.choices[0].message.content
-            await message.reply(bot_response)
+            chunks  = [bot_response[i:i+1900] for i in range(0, len(bot_response), 1900)]
+            for chunk in chunks:
+                await message.reply(chunk)
 
             self.history.add_message(
                 channel_id,
                 Message(role="assistant", content=bot_response),
             )
 
-        self.history.prune_messages(channel_id, bot.config.max_history_length)
+        self.history.prune_messages(channel_id, 
+                                    bot.config.max_history_length, 
+                                    bot.config.max_tokens_context,
+                                    bot.config.personality_tokens,
+                                    bot.config.model,
+                                    bot.config.is_llama)
